@@ -27,16 +27,16 @@ resource "azurerm_kubernetes_cluster" "cluster" {
   location            = "central india"
   name                = "testaks"
   default_node_pool {
-    name    = "defaultpool"
-    vm_size = "Standard_D4s_v3"
+    name       = "defaultpool"
+    vm_size    = "Standard_D4s_v3"
     node_count = 2
   }
   identity {
     type = "SystemAssigned"
   }
-  dns_prefix          = "exampleaks1"
+  dns_prefix = "exampleaks1"
 
-  depends_on = [ module.rg ]
+  depends_on = [module.rg]
 }
 
 
