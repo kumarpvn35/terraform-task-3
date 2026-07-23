@@ -5,14 +5,14 @@ on:
     branches:
       - master
     paths:
-      - "infra/**"
+      - "Infra/**"
       - ".github/workflows/terraform.yml"
 
   push:
     branches:
       - master
     paths:
-      - "infra/**"
+      - "Infra/**"
       - ".github/workflows/terraform.yml"
 
   workflow_dispatch:
@@ -27,7 +27,7 @@ concurrency:
 
 env:
   TF_VERSION: "1.14.0"
-  TF_WORKING_DIRECTORY: "infra"
+  TF_WORKING_DIRECTORY: "Infra"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
 
@@ -126,8 +126,8 @@ jobs:
         with:
           name: dev-terraform-plan
           path: |
-            infra/dev.tfplan
-            infra/dev-plan.txt
+            Infra/dev.tfplan
+            Infra/dev-plan.txt
           retention-days: 1
           if-no-files-found: error
 
@@ -136,7 +136,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dev-plan-preview
-          path: infra/dev-plan.txt
+          path: Infra/dev-plan.txt
           retention-days: 5
           if-no-files-found: error
 
@@ -193,7 +193,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: dev-terraform-plan
-          path: infra
+          path: Infra
 
       - name: Apply Dev Terraform plan
         working-directory: ${{ env.TF_WORKING_DIRECTORY }}
@@ -262,8 +262,8 @@ jobs:
         with:
           name: stage-terraform-plan
           path: |
-            infra/stage.tfplan
-            infra/stage-plan.txt
+            Infra/stage.tfplan
+            Infra/stage-plan.txt
           retention-days: 1
           if-no-files-found: error
 
@@ -317,7 +317,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: stage-terraform-plan
-          path: infra
+          path: Infra
 
       - name: Apply Stage Terraform plan
         working-directory: ${{ env.TF_WORKING_DIRECTORY }}
@@ -397,8 +397,8 @@ jobs:
         with:
           name: prod-terraform-plan
           path: |
-            infra/prod.tfplan
-            infra/prod-plan.txt
+            Infra/prod.tfplan
+            Infra/prod-plan.txt
           retention-days: 1
           if-no-files-found: error
 
@@ -453,7 +453,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: prod-terraform-plan
-          path: infra
+          path: Infra
 
       - name: Apply Prod Terraform plan
         working-directory: ${{ env.TF_WORKING_DIRECTORY }}
