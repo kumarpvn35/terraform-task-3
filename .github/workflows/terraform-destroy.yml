@@ -23,7 +23,7 @@ permissions:
 
 env:
   TF_VERSION: "1.14.0"
-  TF_WORKING_DIRECTORY: "infra"
+  TF_WORKING_DIRECTORY: "Infra"
   TF_IN_AUTOMATION: "true"
   TF_INPUT: "false"
 
@@ -211,8 +211,8 @@ jobs:
         with:
           name: ${{ inputs.environment }}-terraform-destroy-plan
           path: |
-            infra/${{ inputs.environment }}-destroy.tfplan
-            infra/${{ inputs.environment }}-destroy-plan.txt
+            Infra/${{ inputs.environment }}-destroy.tfplan
+            Infra/${{ inputs.environment }}-destroy-plan.txt
           retention-days: 1
           if-no-files-found: error
 
@@ -264,7 +264,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.environment }}-terraform-destroy-plan
-          path: infra
+          path: Infra
 
       - name: Verify destroy plan exists
         working-directory: ${{ env.TF_WORKING_DIRECTORY }}
