@@ -43,6 +43,9 @@ jobs:
     name: Configure ${{ inputs.environment }} Destruction
     runs-on: ubuntu-latest
 
+    environment:
+      name: dev
+
     outputs:
       environment: ${{ steps.config.outputs.environment }}
       backend_file: ${{ steps.config.outputs.backend_file }}
@@ -123,6 +126,9 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ needs.configure.outputs.subscription_id }}
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
+
+    environment:
+      name: dev
 
     steps:
       - name: Checkout repository
@@ -234,6 +240,8 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ needs.configure.outputs.subscription_id }}
       ARM_USE_OIDC: "true"
       ARM_USE_AZUREAD: "true"
+    environment:
+      name: dev
 
     steps:
       - name: Checkout repository
