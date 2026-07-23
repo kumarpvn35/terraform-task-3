@@ -5,7 +5,7 @@ WORKDIR /src
 COPY *.sln .
 COPY UserApi/*.csproj ./UserApi/
 
-RUN dotnet restore ./UserApi/YourProject.csproj
+RUN dotnet restore ./UserApi/UserApi.csproj
 
 COPY . .
 

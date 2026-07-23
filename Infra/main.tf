@@ -41,7 +41,7 @@ resource "azurerm_kubernetes_cluster" "cluster" {
   }
   dns_prefix                = "exampleaks1"
   oidc_issuer_enabled       = true
-  workload_identity_enabled = true
+  workload_identity_enabled = false
   depends_on                = [module.rg]
 }
 
