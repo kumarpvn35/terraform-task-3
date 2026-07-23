@@ -132,19 +132,32 @@ jobs:
       - name: Login to ACR
         run: az acr login --name "$ACR_NAME"
 
+      - name: Generate image version
+        id: version
+        shell: bash
+        run: |
+          VERSION="1.0.${{ github.run_number }}"
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+
+          echo "Generated version: $VERSION"
+
       - name: Set Docker image tags
         id: image
         shell: bash
         run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
+          VERSION="${{ steps.version.outputs.version }}"
+          SHORT_SHA="${{ steps.version.outputs.short_sha }}"
 
-          SHA_IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA"
-          SHORT_SHA_IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:$SHORT_SHA"
+          VERSION_IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:$VERSION"
+          SHA_IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:$SHORT_SHA"
           LATEST_IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:latest"
 
           {
+            echo "version_image=$VERSION_IMAGE"
             echo "sha_image=$SHA_IMAGE"
-            echo "short_sha_image=$SHORT_SHA_IMAGE"
             echo "latest_image=$LATEST_IMAGE"
           } >> "$GITHUB_OUTPUT"
 
@@ -164,3 +177,79 @@ jobs:
           docker push "${{ steps.image.outputs.sha_image }}"
           docker push "${{ steps.image.outputs.short_sha_image }}"
           docker push "${{ steps.image.outputs.latest_image }}"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Get AKS credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          az aks get-credentials \
+            --resource-group "$AKS_RESOURCE_GROUP" \
+            --name "$AKS_NAME" \
+            --overwrite-existing
+
+      - name: Verify AKS connection
+        shell: bash
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Prepare Kubernetes manifest
+        shell: bash
+        env:
+          DEPLOYMENT_IMAGE: ${{ steps.image.outputs.version_image }}
+        run: |
+          set -euo pipefail
+
+          cp Backend/backend-deployment.yaml \
+             Backend/backend-deployment.generated.yaml
+
+          sed -i \
+            "s|BACKEND_IMAGE|${DEPLOYMENT_IMAGE}|g" \
+            Backend/backend-deployment.generated.yaml
+
+          echo "Deploying image:"
+          echo "$DEPLOYMENT_IMAGE"
+
+          echo "Generated Kubernetes manifest:"
+          cat Backend/backend-deployment.generated.yaml
+
+      - name: Deploy backend to AKS
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          kubectl apply \
+            --filename Backend/backend-deployment.generated.yaml
+
+      - name: Wait for deployment rollout
+        shell: bash
+        run: |
+          kubectl rollout status \
+            deployment/backend-api \
+            --namespace default \
+            --timeout=5m
+
+      - name: Show deployment information
+        shell: bash
+        run: |
+          echo "Deployment:"
+          kubectl get deployment backend-api \
+            --namespace default \
+            --output wide
+
+          echo ""
+          echo "Pods:"
+          kubectl get pods \
+            --namespace default \
+            --selector app=backend-api \
+            --output wide
+
+          echo ""
+          echo "Service:"
+          kubectl get service backend-api-service \
+            --namespace default \
+            --output wide
