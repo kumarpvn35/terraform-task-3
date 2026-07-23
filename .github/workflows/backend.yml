@@ -1,0 +1,166 @@
+name: Backend Multi-Stage Deployment
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "Backend/**"
+      # - ".github/workflows/backend.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  id-token: write
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BACKEND_DIRECTORY: Backend
+  DOCKERFILE_PATH: Backend/Dockerfile
+  IMAGE_NAME: dotnet-api
+
+jobs:
+  build-and-push:
+    name: Build and Push Backend Image
+    runs-on: ubuntu-latest
+
+    environment:
+      name: dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Finds the latest successful Terraform workflow run on master.
+      - name: Find latest successful Terraform workflow
+        id: terraform-run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          RUN_ID="$(
+            gh run list \
+              --workflow "terraform.yml" \
+              --branch master \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId'
+          )"
+
+          if [ -z "$RUN_ID" ] || [ "$RUN_ID" = "null" ]; then
+            echo "No successful Terraform workflow run was found."
+            exit 1
+          fi
+
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Using Terraform workflow run: $RUN_ID"
+
+      - name: Download infrastructure metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TERRAFORM_RUN_ID: ${{ steps.terraform-run.outputs.run_id }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p infrastructure-metadata
+
+          gh run download "$TERRAFORM_RUN_ID" \
+            --name infrastructure-metadata \
+            --dir infrastructure-metadata
+
+          if [ ! -f infrastructure-metadata/infrastructure.json ]; then
+            echo "infrastructure.json was not found in the artifact."
+            exit 1
+          fi
+
+      - name: Read infrastructure metadata
+        id: infrastructure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          METADATA_FILE="infrastructure-metadata/infrastructure.json"
+
+          ACR_NAME="$(jq -r '.acr_name' "$METADATA_FILE")"
+          ACR_LOGIN_SERVER="$(jq -r '.acr_login_server' "$METADATA_FILE")"
+          AKS_NAME="$(jq -r '.aks_name' "$METADATA_FILE")"
+          AKS_RESOURCE_GROUP="$(jq -r '.aks_resource_group' "$METADATA_FILE")"
+
+          if [ -z "$ACR_NAME" ] || [ "$ACR_NAME" = "null" ]; then
+            echo "acr_name is missing from infrastructure metadata."
+            exit 1
+          fi
+
+          if [ -z "$ACR_LOGIN_SERVER" ] || [ "$ACR_LOGIN_SERVER" = "null" ]; then
+            echo "acr_login_server is missing from infrastructure metadata."
+            exit 1
+          fi
+
+          {
+            echo "acr_name=$ACR_NAME"
+            echo "acr_login_server=$ACR_LOGIN_SERVER"
+            echo "aks_name=$AKS_NAME"
+            echo "aks_resource_group=$AKS_RESOURCE_GROUP"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "ACR_NAME=$ACR_NAME"
+            echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER"
+            echo "AKS_NAME=$AKS_NAME"
+            echo "AKS_RESOURCE_GROUP=$AKS_RESOURCE_GROUP"
+          } >> "$GITHUB_ENV"
+
+          echo "Registry: $ACR_LOGIN_SERVER"
+          echo "AKS cluster: $AKS_NAME"
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Set Docker image tags
+        id: image
+        shell: bash
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          SHA_IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:$GITHUB_SHA"
+          SHORT_SHA_IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:$SHORT_SHA"
+          LATEST_IMAGE="$ACR_LOGIN_SERVER/$IMAGE_NAME:latest"
+
+          {
+            echo "sha_image=$SHA_IMAGE"
+            echo "short_sha_image=$SHORT_SHA_IMAGE"
+            echo "latest_image=$LATEST_IMAGE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker Image
+        shell: bash
+        run: |
+          docker build \
+            --file "$DOCKERFILE_PATH" \
+            --tag "${{ steps.image.outputs.sha_image }}" \
+            --tag "${{ steps.image.outputs.short_sha_image }}" \
+            --tag "${{ steps.image.outputs.latest_image }}" \
+            "$BACKEND_DIRECTORY"
+
+      - name: Push Docker Images
+        shell: bash
+        run: |
+          docker push "${{ steps.image.outputs.sha_image }}"
+          docker push "${{ steps.image.outputs.short_sha_image }}"
+          docker push "${{ steps.image.outputs.latest_image }}"

@@ -41,17 +41,28 @@ resource "azurerm_kubernetes_cluster" "cluster" {
 
 
 resource "azurerm_container_registry" "acr" {
-  name                = "containerRegistry1"
+  name                = "containerRegistry8025"
   resource_group_name = "resource_group_1"
   location            = "central india"
   sku                 = "Basic"
   admin_enabled       = false
 }
 
-resource "azurerm_role_assignment" "example" {
+data "azuread_service_principal" "sp" {
+  client_id = "f903cbb2-ca50-485a-9c09-08e5444654fd"
+}
+
+resource "azurerm_role_assignment" "aks_acr_pull" {
   principal_id                     = azurerm_kubernetes_cluster.cluster.kubelet_identity[0].object_id
   role_definition_name             = "AcrPull"
   scope                            = azurerm_container_registry.acr.id
   skip_service_principal_aad_check = true
 }
 
+
+resource "azurerm_role_assignment" "aks_acr_pull_sp" {
+  principal_id                     = data.azuread_service_principal.sp.object_id
+  role_definition_name             = "AcrPush"
+  scope                            = azurerm_container_registry.acr.id
+  skip_service_principal_aad_check = true
+}
