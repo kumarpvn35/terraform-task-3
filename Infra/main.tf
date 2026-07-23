@@ -30,13 +30,19 @@ resource "azurerm_kubernetes_cluster" "cluster" {
     name       = "defaultpool"
     vm_size    = "Standard_D4s_v3"
     node_count = 2
+    upgrade_settings {
+      drain_timeout_in_minutes      = 0
+      max_surge                     = "10%"
+      node_soak_duration_in_minutes = 0
+    }
   }
   identity {
     type = "SystemAssigned"
   }
-  dns_prefix = "exampleaks1"
-
-  depends_on = [module.rg]
+  dns_prefix                = "exampleaks1"
+  oidc_issuer_enabled       = true
+  workload_identity_enabled = true
+  depends_on                = [module.rg]
 }
 
 
