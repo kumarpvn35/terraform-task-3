@@ -166,6 +166,7 @@ jobs:
         run: |
           docker build \
             --file "$DOCKERFILE_PATH" \
+            --tag "${{ steps.image.outputs.version_image }}" \
             --tag "${{ steps.image.outputs.sha_image }}" \
             --tag "${{ steps.image.outputs.latest_image }}" \
             "$BACKEND_DIRECTORY"
@@ -173,6 +174,7 @@ jobs:
       - name: Push Docker Images
         shell: bash
         run: |
+          docker push "${{ steps.image.outputs.version_image }}"
           docker push "${{ steps.image.outputs.sha_image }}"
           docker push "${{ steps.image.outputs.latest_image }}"
 
