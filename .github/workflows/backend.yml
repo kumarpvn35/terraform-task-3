@@ -167,7 +167,6 @@ jobs:
           docker build \
             --file "$DOCKERFILE_PATH" \
             --tag "${{ steps.image.outputs.sha_image }}" \
-            --tag "${{ steps.image.outputs.short_sha_image }}" \
             --tag "${{ steps.image.outputs.latest_image }}" \
             "$BACKEND_DIRECTORY"
 
@@ -175,7 +174,6 @@ jobs:
         shell: bash
         run: |
           docker push "${{ steps.image.outputs.sha_image }}"
-          docker push "${{ steps.image.outputs.short_sha_image }}"
           docker push "${{ steps.image.outputs.latest_image }}"
 
       - name: Install kubectl
