@@ -1,0 +1,464 @@
+name: Terraform Multi-Stage Deployment
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+
+  push:
+    branches:
+      - master
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_VERSION: "1.14.0"
+  TF_WORKING_DIRECTORY: "infra"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+
+  # ============================================================
+  # 1. STATIC VALIDATION
+  # ============================================================
+
+  validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform fmt -check -recursive
+
+      - name: Initialize Terraform without backend
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform init -backend=false
+
+      - name: Validate Terraform configuration
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform validate
+
+
+  # ============================================================
+  # 2. DEV PLAN
+  # Runs for pull requests and main branch
+  # ============================================================
+
+  dev-plan:
+    name: Dev - Terraform Plan
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+
+    environment:
+      name: dev
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize Dev backend
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: |
+          terraform init \
+            -reconfigure \
+            -backend-config="environments/dev/backend.hcl"
+
+      - name: Create Dev plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: |
+          terraform plan \
+            -var-file="environments/dev/dev.tfvars" \
+            -out="dev.tfplan"
+
+      - name: Generate readable Dev plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform show -no-color dev.tfplan > dev-plan.txt
+
+      - name: Upload Dev Terraform plan
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-terraform-plan
+          path: |
+            infra/dev.tfplan
+            infra/dev-plan.txt
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload Dev plan preview
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-plan-preview
+          path: infra/dev-plan.txt
+          retention-days: 5
+          if-no-files-found: error
+
+
+  # ============================================================
+  # 3. DEV APPLY
+  # Runs only after merge/push to main
+  # ============================================================
+
+  dev-apply:
+    name: Dev - Terraform Apply
+    runs-on: ubuntu-latest
+
+    needs:
+      - dev-plan
+
+    if: github.event_name != 'pull_request'
+
+    environment:
+      name: dev
+
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize Dev backend
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: |
+          terraform init \
+            -reconfigure \
+            -backend-config="environments/dev/backend.hcl"
+
+      - name: Download Dev Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: dev-terraform-plan
+          path: infra
+
+      - name: Apply Dev Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform apply -auto-approve dev.tfplan
+
+
+  # ============================================================
+  # 4. STAGE PLAN
+  # Starts only when Dev Apply succeeds
+  # ============================================================
+
+  stage-plan:
+    name: Stage - Terraform Plan
+    runs-on: ubuntu-latest
+
+    needs:
+      - dev-apply
+
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+    
+    environment:
+      name: stage
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize Stage backend
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: |
+          terraform init \
+            -reconfigure \
+            -backend-config="environments/stage/backend.hcl"
+
+      - name: Create Stage plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: |
+          terraform plan \
+            -var-file="environments/stage/stage.tfvars" \
+            -out="stage.tfplan"
+
+      - name: Generate readable Stage plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform show -no-color stage.tfplan > stage-plan.txt
+
+      - name: Upload Stage Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-terraform-plan
+          path: |
+            infra/stage.tfplan
+            infra/stage-plan.txt
+          retention-days: 1
+          if-no-files-found: error
+
+
+  # ============================================================
+  # 5. STAGE APPLY
+  # ============================================================
+
+  stage-apply:
+    name: Stage - Terraform Apply
+    runs-on: ubuntu-latest
+
+    needs:
+      - stage-plan
+
+    environment:
+      name: stage
+
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize Stage backend
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: |
+          terraform init \
+            -reconfigure \
+            -backend-config="environments/stage/backend.hcl"
+
+      - name: Download Stage Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: stage-terraform-plan
+          path: infra
+
+      - name: Apply Stage Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform apply -auto-approve stage.tfplan
+
+
+  # ============================================================
+  # 6. PROD PLAN
+  # Plan is generated before approval
+  # ============================================================
+
+  prod-plan:
+    name: Prod - Terraform Plan
+    runs-on: ubuntu-latest
+
+    needs:
+      - stage-apply
+
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+    environment:
+      name: prod
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize Prod backend
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: |
+          terraform init \
+            -reconfigure \
+            -backend-config="environments/prod/backend.hcl"
+
+      - name: Create Prod plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: |
+          terraform plan \
+            -var-file="environments/prod/prod.tfvars" \
+            -out="prod.tfplan"
+
+      - name: Generate readable Prod plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform show -no-color prod.tfplan > prod-plan.txt
+
+      - name: Add Prod plan to job summary
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          {
+            echo "## Production Terraform Plan"
+            echo ""
+            echo '```terraform'
+            cat prod-plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Prod Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-terraform-plan
+          path: |
+            infra/prod.tfplan
+            infra/prod-plan.txt
+          retention-days: 1
+          if-no-files-found: error
+
+
+  # ============================================================
+  # 7. PROD APPLY
+  # This job waits for GitHub Environment approval
+  # ============================================================
+
+  prod-apply:
+    name: Prod - Approval and Terraform Apply
+    runs-on: ubuntu-latest
+
+    needs:
+      - prod-plan
+
+    environment:
+      name: prod
+
+    env:
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Initialize Prod backend
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: |
+          terraform init \
+            -reconfigure \
+            -backend-config="environments/prod/backend.hcl"
+
+      - name: Download approved Prod Terraform plan
+        uses: actions/download-artifact@v4
+        with:
+          name: prod-terraform-plan
+          path: infra
+
+      - name: Apply Prod Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform apply -auto-approve prod.tfplan
+
+      - name: Show Terraform outputs
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform output

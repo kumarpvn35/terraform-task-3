@@ -1,0 +1,79 @@
+**/node_modules
+**/dist
+**/.angular
+**/coverage
+**/.env
+
+**/.last-build-timestamp
+
+**/bin
+**/obj
+
+**.db**
+**.tgz**
+**/angular/ssl/server.**
+**/Tools/erpm/DeviceDrivers/DeviceDriverManager/Drivers/**
+
+**/packages/**
+
+# System
+.vs
+.DS_Store
+Thumbs.db
+# Ignore everything in the .vscode folder
+.vscode/*
+# But do not ignore settings.json
+!.vscode/settings.json
+# Ignore everything in the .github folder
+.github/instructions/*
+#But do not ignore copilot-instructions.md
+!.github/instructions/copilot.instructions.md
+# Ignore everything in the ai-review-tools folder
+ai-review-tools/*
+# but do not ignore ai-pr-review folder and its contents
+!ai-review-tools/ai-pr-review/
+!ai-review-tools/ai-pr-review/**
+
+
+~*
+erpm-engine/erpm-engine-test/bin/
+erpm-engine/erpm-engine-test/obj/
+erpm-engine/erpm-common-object-model/obj/
+erpm-engine/erpm-common-object-model/bin/
+erpm-engine/erpm-common-object-model-test/bin/
+erpm-engine/erpm-common-object-model-test/obj/
+Tools/erpm/common-object-model/obj/common-object-model.csproj.nuget.dgspec.json
+Tools/erpm/common-object-model/obj/
+Tools/erpm/common-object-model-test/bin/
+Tools/erpm/common-object-model-test/obj/
+Tools/erpm/engine/bin/
+Tools/erpm/engine/obj/
+Tools/erpm/engine-test/bin/
+Tools/erpm/engine-test/obj/
+Tools/erpm/common-object-model/bin/
+Tools/erpm/engine/data.db
+Tools/erpm/engine/data.db-wal
+Tools/erpm/engine/data.db-shm
+**/.sonarqube
+/Tools/erpm/common-object-model-test/data-test.db
+/Tools/erpm/Eurotherm.ERPM.Engine.DAL.Repositories/bin
+/Tools/erpm/Eurotherm.ERPM.Engine.DAL.Repositories/obj
+/Tools/erpm/Eurotherm.ERPM.Engine.DAL.Repositories.Tests/bin/
+/Tools/erpm/Eurotherm.ERPM.Engine.DAL.Repositories.Tests/obj
+/Tools/erpm/Eurotherm.ERPM.Engine.DAL.Repositories.Tests/data-test.db
+/Tools/erpm/Eurotherm.ERPM.Engine.DAL.Repositories.Tests/data-test.db-shm
+/Tools/erpm/Eurotherm.ERPM.Engine.DAL.Repositories.Tests/data-test.db-wal
+/Tools/erpm/engine/Engine.csproj.user
+/angular/projects/erpm-spa/src/assets/editor/function-blocks
+/Tools/erpm/VisualizationMockEngine/VisualizationMockEngine.csproj.user
+/Tools/erpm/SAM/SAM.csproj.user
+/Tools/erpm/mock-data/default.cfgz
+/Tools/erpm/VisualizationMockEngine/Properties/PublishProfiles
+/Tools/erpm/Tools/erpm/mock-data/default.cfgz
+/Research/POC/CompositeCompilationPOC/out/build/x64-debug
+/Research/POC/CompositeCompilationPOC/DllCplusplus/x64/Debug
+/Research/POC/CompositeCompilationPOC/x64/Debug
+/FunctionBlocks/epm_functionblocks
+/SecurityManager/UserAccessManagement/UserAccessManagement.csproj.user
+/SecurityManager/UserAccessManagement/Properties/PublishProfiles/Publish to Program Files.pubxml.user
+/SecurityManager/UserAccessManagement/UserAccessManagement.csproj.user

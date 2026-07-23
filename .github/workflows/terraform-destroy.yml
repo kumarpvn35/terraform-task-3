@@ -1,0 +1,306 @@
+name: Terraform Environment Destruction
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to destroy
+        required: true
+        type: choice
+        options:
+          - dev
+          - stage
+          - prod
+
+      confirmation:
+        description: Type DESTROY-<environment>, for example DESTROY-dev
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_VERSION: "1.14.0"
+  TF_WORKING_DIRECTORY: "infra"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+# Prevent deployment and destruction from operating on the same
+# selected environment at the same time.
+concurrency:
+  group: terraform-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+
+  # ============================================================
+  # 1. VALIDATE REQUEST AND RESOLVE ENVIRONMENT CONFIGURATION
+  # ============================================================
+
+  configure:
+    name: Configure ${{ inputs.environment }} Destruction
+    runs-on: ubuntu-latest
+
+    outputs:
+      environment: ${{ steps.config.outputs.environment }}
+      backend_file: ${{ steps.config.outputs.backend_file }}
+      tfvars_file: ${{ steps.config.outputs.tfvars_file }}
+      client_id: ${{ steps.config.outputs.client_id }}
+      tenant_id: ${{ steps.config.outputs.tenant_id }}
+      subscription_id: ${{ steps.config.outputs.subscription_id }}
+
+    steps:
+      - name: Validate confirmation
+        shell: bash
+        env:
+          SELECTED_ENVIRONMENT: ${{ inputs.environment }}
+          ENTERED_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          EXPECTED_CONFIRMATION="DESTROY-${SELECTED_ENVIRONMENT}"
+
+          if [ "${ENTERED_CONFIRMATION}" != "${EXPECTED_CONFIRMATION}" ]; then
+            echo "::error::Invalid destruction confirmation."
+            echo ""
+            echo "Selected environment: ${SELECTED_ENVIRONMENT}"
+            echo "Expected confirmation: ${EXPECTED_CONFIRMATION}"
+            echo "Entered confirmation: ${ENTERED_CONFIRMATION}"
+            exit 1
+          fi
+
+          echo "Destruction confirmation accepted for ${SELECTED_ENVIRONMENT}."
+
+      - name: Resolve environment configuration
+        id: config
+        shell: bash
+        env:
+          SELECTED_ENVIRONMENT: ${{ inputs.environment }}
+
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+
+        run: |
+          if [ -z "${AZURE_CLIENT_ID}" ]; then
+            echo "::error::Azure client ID is empty for ${SELECTED_ENVIRONMENT}."
+            exit 1
+          fi
+
+          if [ -z "${AZURE_SUBSCRIPTION_ID}" ]; then
+            echo "::error::Azure subscription ID is empty for ${SELECTED_ENVIRONMENT}."
+            exit 1
+          fi
+
+          if [ -z "${AZURE_TENANT_ID}" ]; then
+            echo "::error::Azure tenant ID is empty."
+            exit 1
+          fi
+
+          {
+            echo "environment=${SELECTED_ENVIRONMENT}"
+            echo "backend_file=environments/${SELECTED_ENVIRONMENT}/backend.hcl"
+            echo "tfvars_file=environments/${SELECTED_ENVIRONMENT}/${SELECTED_ENVIRONMENT}.tfvars"
+            echo "client_id=${AZURE_CLIENT_ID}"
+            echo "tenant_id=${AZURE_TENANT_ID}"
+            echo "subscription_id=${AZURE_SUBSCRIPTION_ID}"
+          } >> "${GITHUB_OUTPUT}"
+
+
+  # ============================================================
+  # 2. CREATE DESTROY PLAN
+  # ============================================================
+
+  destroy-plan:
+    name: ${{ inputs.environment }} - Destroy Plan
+    runs-on: ubuntu-latest
+    needs:
+      - configure
+
+    env:
+      ARM_CLIENT_ID: ${{ needs.configure.outputs.client_id }}
+      ARM_TENANT_ID: ${{ needs.configure.outputs.tenant_id }}
+      ARM_SUBSCRIPTION_ID: ${{ needs.configure.outputs.subscription_id }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ needs.configure.outputs.client_id }}
+          tenant-id: ${{ needs.configure.outputs.tenant_id }}
+          subscription-id: ${{ needs.configure.outputs.subscription_id }}
+
+      - name: Check environment files
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          BACKEND_FILE="${{ needs.configure.outputs.backend_file }}"
+          TFVARS_FILE="${{ needs.configure.outputs.tfvars_file }}"
+
+          if [ ! -f "${BACKEND_FILE}" ]; then
+            echo "::error::Backend file not found: ${BACKEND_FILE}"
+            exit 1
+          fi
+
+          if [ ! -f "${TFVARS_FILE}" ]; then
+            echo "::error::Variable file not found: ${TFVARS_FILE}"
+            exit 1
+          fi
+
+      - name: Initialize selected backend
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          terraform init \
+            -reconfigure \
+            -backend-config="${{ needs.configure.outputs.backend_file }}"
+
+      - name: Validate Terraform configuration
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        run: terraform validate
+
+      - name: Create destroy plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          terraform plan \
+            -destroy \
+            -var-file="${{ needs.configure.outputs.tfvars_file }}" \
+            -out="${{ inputs.environment }}-destroy.tfplan"
+
+      - name: Generate readable destroy plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          terraform show \
+            -no-color \
+            "${{ inputs.environment }}-destroy.tfplan" \
+            > "${{ inputs.environment }}-destroy-plan.txt"
+
+      - name: Add destroy plan to workflow summary
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          {
+            echo "# Terraform Destruction Plan"
+            echo ""
+            echo "**Environment:** \`${{ inputs.environment }}\`"
+            echo ""
+            echo "**Backend:** \`${{ needs.configure.outputs.backend_file }}\`"
+            echo ""
+            echo "> The following resources will be destroyed."
+            echo ""
+            echo '```terraform'
+            cat "${{ inputs.environment }}-destroy-plan.txt"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload destroy plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.environment }}-terraform-destroy-plan
+          path: |
+            infra/${{ inputs.environment }}-destroy.tfplan
+            infra/${{ inputs.environment }}-destroy-plan.txt
+          retention-days: 1
+          if-no-files-found: error
+
+
+  # ============================================================
+  # 3. APPLY DESTROY PLAN
+  # ============================================================
+
+  destroy-apply:
+    name: ${{ inputs.environment }} - Destroy Apply
+    runs-on: ubuntu-latest
+    needs:
+      - configure
+      - destroy-plan
+
+    env:
+      ARM_CLIENT_ID: ${{ needs.configure.outputs.client_id }}
+      ARM_TENANT_ID: ${{ needs.configure.outputs.tenant_id }}
+      ARM_SUBSCRIPTION_ID: ${{ needs.configure.outputs.subscription_id }}
+      ARM_USE_OIDC: "true"
+      ARM_USE_AZUREAD: "true"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ needs.configure.outputs.client_id }}
+          tenant-id: ${{ needs.configure.outputs.tenant_id }}
+          subscription-id: ${{ needs.configure.outputs.subscription_id }}
+
+      - name: Initialize selected backend
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          terraform init \
+            -reconfigure \
+            -backend-config="${{ needs.configure.outputs.backend_file }}"
+
+      - name: Download destroy plan
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.environment }}-terraform-destroy-plan
+          path: infra
+
+      - name: Verify destroy plan exists
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          PLAN_FILE="${{ inputs.environment }}-destroy.tfplan"
+
+          if [ ! -f "${PLAN_FILE}" ]; then
+            echo "::error::Destroy plan file not found: ${PLAN_FILE}"
+            exit 1
+          fi
+
+      - name: Apply destroy plan
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          terraform apply \
+            -auto-approve \
+            "${{ inputs.environment }}-destroy.tfplan"
+
+      - name: Verify remaining managed resources
+        working-directory: ${{ env.TF_WORKING_DIRECTORY }}
+        shell: bash
+        run: |
+          echo "Resources remaining in the selected Terraform state:"
+          terraform state list || true
+
+      - name: Write destruction summary
+        shell: bash
+        run: |
+          {
+            echo "# Environment Destroyed"
+            echo ""
+            echo "Terraform destruction completed successfully."
+            echo ""
+            echo "- Environment: \`${{ inputs.environment }}\`"
+            echo "- State configuration: \`${{ needs.configure.outputs.backend_file }}\`"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
