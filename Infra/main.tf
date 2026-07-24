@@ -52,6 +52,8 @@ resource "azurerm_container_registry" "acr" {
   location            = "central india"
   sku                 = "Basic"
   admin_enabled       = false
+
+  depends_on                = [module.rg]
 }
 
 data "azuread_service_principal" "sp" {
