@@ -53,7 +53,7 @@ resource "azurerm_container_registry" "acr" {
   sku                 = "Basic"
   admin_enabled       = false
 
-  depends_on                = [module.rg]
+  depends_on = [module.rg]
 }
 
 data "azuread_service_principal" "sp" {
